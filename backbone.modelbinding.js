@@ -1,4 +1,7 @@
 // Backbone.ModelBinding v0.5.0
+// [jbarnette] Added getAttributeValue, allowing values to come from functions.
+// [cmorse]    Added mediate support
+// [toots]     Added foo.bar.baz syntax for bound attributes
 //
 // Copyright (C)2011 Derick Bailey, Muted Solutions, LLC
 // Distributed Under MIT Liscene
@@ -25,6 +28,48 @@ var modelbinding = (function(Backbone, _, $) {
         view.modelBinder.unbind()
       }
     }
+  };
+
+  // pop attribute name from model. It takes, in order
+  // of priority:
+  // model[name] if defined and not a function
+  // model[name]() if defined and a function
+  // model.get(name) otherwise
+  var popAttribute = function (model, name) {
+    var value = model[name];
+    if (value) {
+      if (_.isFunction(value))
+        value = value.apply(model)
+    } else {
+      if (model.get) {
+        value = model.get(name);
+      } else {
+        return undefined;
+      }
+    }
+    return value;
+  }
+
+  // This function is expected to return attributes
+  // and not a whole model. This, if resulting
+  // object is of type Backbone.Model, it pops
+  // out its ID.
+
+  var getAttributeValue = function(model, name) {
+    var value = model;
+
+    name = "" + name;
+
+    names = name.split(".");
+    
+    _.each(names, function (name) { 
+      value = popAttribute(value, name);
+    });
+
+    if (value instanceof Backbone.Model)
+      value = value.id;
+
+    return value;
   };
 
   var ModelBinder = function(view, options){
@@ -180,13 +225,36 @@ var modelbinding = (function(Backbone, _, $) {
         var element = view.$(this);
         var elementType = _getElementType(element);
         var attribute_name = config.getBindingValue(element, elementType);
+        if (!attribute_name) return;
+        var mediator = modelBinding.getMediator(element);
 
-        var modelChange = function(changed_model, val){ element.val(val); };
+        var modelChange = function(changed_model, val) {
+          element.val(mediator.render(val));
+        };
+
+        var popData = function (options, name) {
+          var target;
+          if (target = options.model[name]) {
+            options.model = _.isFunction(target) ? target() : target
+          } else {
+            options.data[name] = options.model.get(name) || {};
+            options.data = options.data[name];
+          }
+        }
 
         var setModelValue = function(attr_name, value){
-          var data = {};
-          data[attr_name] = value;
-          model.set(data);
+          var origData = {};
+          var options = { data: origData, model: model };
+
+          attr_names = attr_name.split(".");
+          attr_name  = attr_names.pop();
+
+          _.each(attr_names, function (name) {
+            popData(options, name);
+          });
+
+          options.data[attr_name] = mediator.parse(value);
+          options.model.set(origData);
         };
 
         var elementChange = function(ev){
@@ -197,9 +265,9 @@ var modelbinding = (function(Backbone, _, $) {
         modelBinder.registerElementBinding(element, elementChange);
 
         // set the default value on the form, from the model
-        var attr_value = model.get(attribute_name);
+        var attr_value = getAttributeValue(model, attribute_name);
         if (typeof attr_value !== "undefined" && attr_value !== null) {
-          element.val(attr_value);
+          element.val(mediator.render(attr_value));
         } else {
           var elVal = element.val();
           if (elVal){
@@ -224,14 +292,34 @@ var modelbinding = (function(Backbone, _, $) {
       view.$(selector).each(function(index){
         var element = view.$(this);
         var attribute_name = config.getBindingValue(element, 'select');
+        if (!attribute_name) return;
 
         var modelChange = function(changed_model, val){ element.val(val); };
 
-        var setModelValue = function(attr, val, text){
-          var data = {};
-          data[attr] = val;
-          data[attr + "_text"] = text;
-          model.set(data);
+        var popData = function (options, name) {
+          var target;
+          if (target = options.model[name]) {
+            options.model = _.isFunction(target) ? target() : target
+          } else {
+            options.data[name] = options.model.get(name) || {};
+            options.data = options.data[name];
+          }
+        }
+
+        var setModelValue = function(attr_name, val, text){
+          var origData = {};
+          var options = { data: origData, model: model };
+
+          attr_names = attr_name.split(".");
+          attr_name  = attr_names.pop();
+
+          _.each(attr_names, function (name) {
+            popData(options, name);
+          });
+
+          options.data[attr_name] = val;
+          options.data[attr_name + "_text"] = text;
+          options.model.set(options.data);
         };
 
         var elementChange = function(ev){
@@ -245,13 +333,11 @@ var modelbinding = (function(Backbone, _, $) {
         modelBinder.registerElementBinding(element, elementChange);
 
         // set the default value on the form, from the model
-        var attr_value = model.get(attribute_name);
+        var attr_value = getAttributeValue(model, attribute_name);
         if (typeof attr_value !== "undefined" && attr_value !== null) {
           element.val(attr_value);
-        } 
-
-        // set the model to the form's value if there is no model value
-        if (element.val() != attr_value) {
+        } else {
+          // set the model to the form's value if there is no model value
           var value = element.val();
           var text = element.find(":selected").text();
           setModelValue(attribute_name, value, text);
@@ -306,7 +392,7 @@ var modelbinding = (function(Backbone, _, $) {
             modelBinder.registerElementBinding(groupEl, elementChange);
           });
 
-          var attr_value = model.get(group_name);
+          var attr_value = getAttributeValue(model, group_name);
           if (typeof attr_value !== "undefined" && attr_value !== null) {
             // set the default value on the form, from the model
             var value_selector = "input[type=radio][" + bindingAttr + "='" + group_name + "'][value='" + attr_value + "']";
@@ -338,6 +424,8 @@ var modelbinding = (function(Backbone, _, $) {
         var bindingAttr = config.getBindingAttr('checkbox');
         var attribute_name = config.getBindingValue(element, 'checkbox');
 
+        if (!attribute_name) return;
+        
         var modelChange = function(model, val){
           if (val){
             element.attr("checked", "checked");
@@ -365,7 +453,7 @@ var modelbinding = (function(Backbone, _, $) {
         var attr_exists = model.attributes.hasOwnProperty(attribute_name);
         if (attr_exists) {
           // set the default value on the form, from the model
-          var attr_value = model.get(attribute_name);
+          var attr_value = getAttributeValue(model, attribute_name);
           if (typeof attr_value !== "undefined" && attr_value !== null && attr_value != false) {
             element.attr("checked", "checked");
           }
@@ -422,6 +510,7 @@ var modelbinding = (function(Backbone, _, $) {
     var setOnElement = function(element, attr, val){
       var valBefore = val;
       val = modelBinding.Configuration.getDataBindSubst(attr, val);
+      val = modelBinding.getMediator(element).render(val);
       switch(attr){
         case "html":
           element.html(val);
@@ -495,8 +584,9 @@ var modelbinding = (function(Backbone, _, $) {
         _.each(databindList, function(databind){
           var eventConfig = getEventConfiguration(element, databind);
           modelBinder.registerDataBinding(model, eventConfig.name, eventConfig.callback);
+
           // set default on data-bind element
-          setOnElement(element, databind.elementAttr, model.get(databind.modelAttr));
+          setOnElement(element, databind.elementAttr, getAttributeValue(model, databind.modelAttr));
         });
 
       });
@@ -526,6 +616,16 @@ var modelbinding = (function(Backbone, _, $) {
     email: {selector: "input[type=email]", handler: StandardBinding}
   };
 
+  modelBinding.Mediators = {}
+
+  modelBinding.getMediator = function(element) {
+    var mediator = modelBinding.Mediators[$(element).attr("data-mediator")] || {};
+
+    mediator.parse = mediator.parse || function(t) { return t; }
+    mediator.render = mediator.render || function(t) { return t; }
+    return mediator;
+  }
+  
   return modelBinding;
 });
 
