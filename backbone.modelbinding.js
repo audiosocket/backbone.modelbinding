@@ -2,6 +2,7 @@
 // [jbarnette] Added getAttributeValue, allowing values to come from functions.
 // [cmorse]    Added mediate support
 // [toots]     Added foo.bar.baz syntax for bound attributes
+// [toots]     Added setAttribute, allowing to set values to set#{label}, if defined.
 //
 // Copyright (C)2011 Derick Bailey, Muted Solutions, LLC
 // Distributed Under MIT Liscene
@@ -71,6 +72,25 @@ var modelbinding = (function(Backbone, _, $) {
 
     return value;
   };
+
+  var setAttributeValue = function (model, label, attribute) {
+    var options = {};
+    if (typeof attribute !== "undefined" && attribute !== null) {
+      options[label] = attribute;
+    } else {
+      options = label;
+    }
+
+    _.each(options, function (attr, key) {
+      label = "set" + key.charAt(0).toUpperCase() + key.slice(1);
+      if (_.isFunction(model[label])) {
+        model[label](attr);
+        delete options[key];
+      }
+    });
+
+    model.set(options);
+  }
 
   var ModelBinder = function(view, options){
     this.config = new modelBinding.Configuration(options);
@@ -254,7 +274,7 @@ var modelbinding = (function(Backbone, _, $) {
           });
 
           options.data[attr_name] = mediator.parse(value);
-          options.model.set(origData);
+          setAttributeValue(options.model, origData);
         };
 
         var elementChange = function(ev){
@@ -319,7 +339,7 @@ var modelbinding = (function(Backbone, _, $) {
 
           options.data[attr_name] = val;
           options.data[attr_name + "_text"] = text;
-          options.model.set(origData);
+          setAttributeValue(options.model, origData);
         };
 
         var elementChange = function(ev){
@@ -375,7 +395,7 @@ var modelbinding = (function(Backbone, _, $) {
           var setModelValue = function(attr, val){
             var data = {};
             data[attr] = val;
-            model.set(data);
+            setAttributeValue(model, data);
           };
 
           // bind the form changes to the model
@@ -438,7 +458,7 @@ var modelbinding = (function(Backbone, _, $) {
         var setModelValue = function(attr_name, value){
           var data = {};
           data[attr_name] = value;
-          model.set(data);
+          setAttributeValue(model, data);
         };
 
         var elementChange = function(ev){
@@ -450,10 +470,9 @@ var modelbinding = (function(Backbone, _, $) {
         modelBinder.registerModelBinding(model, attribute_name, modelChange);
         modelBinder.registerElementBinding(element, elementChange);
 
-        var attr_exists = model.attributes.hasOwnProperty(attribute_name);
-        if (attr_exists) {
+        var attr_value = getAttributeValue(model, attribute_name);
+        if (typeof attr_value !== "undefined" && attr_value !== null) {
           // set the default value on the form, from the model
-          var attr_value = getAttributeValue(model, attribute_name);
           if (typeof attr_value !== "undefined" && attr_value !== null && attr_value != false) {
             element.attr("checked", "checked");
           }
