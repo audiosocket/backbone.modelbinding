@@ -37,6 +37,9 @@ var modelbinding = (function(Backbone, _, $) {
   // model[name]() if defined and a function
   // model.get(name) otherwise
   var popAttribute = function (model, name) {
+    if (!_.isObject(model)) {
+      return undefined; 
+    }
     var value = model[name];
     if (value) {
       if (_.isFunction(value))
